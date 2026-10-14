@@ -1,0 +1,17 @@
+name: Build Windows 32-bit
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - run: git clone https://github.com/matzinhozz/redemption860.git src
+      - uses: lukka/run-vcpkg@v11
+      - run: |
+          cd src
+          vcpkg install --triplet=x86-windows
+          cmake -B build -A Win32 -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x86-windows -T v141
+          cmake --build build --config Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: otclient-win32
+          path: src/build/Release/otclient.exe
