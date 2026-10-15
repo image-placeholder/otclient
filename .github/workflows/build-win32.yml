@@ -3,6 +3,8 @@ on: workflow_dispatch
 jobs:
   build:
     runs-on: windows-2022
+    env:
+      VCPKG_BINARY_SOURCES: "clear"
     steps:
       - name: Clone source
         run: git clone https://github.com/matzinhozz/redemption860.git src
