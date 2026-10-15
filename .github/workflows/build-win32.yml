@@ -6,6 +6,10 @@ jobs:
     env:
       VCPKG_BINARY_SOURCES: "clear"
     steps:
+      - name: Install VS2017 Build Tools
+        run: choco install visualstudio2017buildtools visualstudio2017-workload-vctools -y
+        shell: pwsh
+
       - name: Clone source
         run: git clone https://github.com/matzinhozz/redemption860.git src
       
