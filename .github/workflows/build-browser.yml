@@ -32,6 +32,9 @@ jobs:
       group: otclient-emscripten-${{ github.workflow }}-${{ github.ref }}-${{ matrix.buildtype }}
       cancel-in-progress: true
 
+    env:
+      VCPKG_BINARY_SOURCES: "clear"
+
     strategy:
       fail-fast: false
       matrix:
