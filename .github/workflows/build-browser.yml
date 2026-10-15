@@ -38,10 +38,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        buildtype: [emscripten-debug]
+        buildtype: [emscripten-release]
         include:
-          - buildtype: emscripten-debug
-            cmake_build_type: Debug
+          - buildtype: emscripten-release
+            cmake_build_type: Release
 
     steps:
       - name: Checkout repository
