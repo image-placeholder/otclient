@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no"
+    />
+    <title>Loading</title>
+    <style>
+      body {
+        margin: 0;
+        background-color: black;
+        overscroll-behavior: contain;
+      }
+      .backbuffer {
+        position: absolute;
+        top: 0px;
+        left: 0px;
+        margin: 0px;
+        border: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        display: block;
+        image-rendering: optimizeSpeed;
+        image-rendering: -moz-crisp-edges;
+        image-rendering: -o-crisp-edges;
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: optimize-contrast;
+        image-rendering: crisp-edges;
+        -ms-interpolation-mode: nearest-neighbor;
+      }
+      .title {
+        pointer-events: none;
+        position: absolute;
+        top: 10px;
+        margin-top: 0px;
+        padding-left: 10px;
+        color: white;
+        text-decoration: none;
+        z-index: 1;
+        text-align: left;
+        font-family: "Roboto", Helvetica, sans-serif;
+        font-size: 20px;
+        -webkit-user-select: none; /* Safari */
+        -ms-user-select: none; /* IE 10 and IE 11 */
+        user-select: none; /* Standard syntax */
+      }
+      #start {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 3;
+        font-size: 2rem;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      class="title"
+      id="title-text"
+      contenteditable
+      virtualkeyboardpolicy="manual"
+    ></div>
+    <button id="start" onclick="startGame()">Start</button>
+    <canvas
+      class="backbuffer"
+      id="canvas"
+      oncontextmenu="event.preventDefault()"
+      tabindex="0"
+    ></canvas>
+    <script type="text/javascript">
+      var canvas = document.getElementById("canvas");
+      function startGame() {
+        document.getElementById("start").style.display = "none";
+        callMain();
+        document.addEventListener("touchstart", function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        });
+        document.addEventListener("touchmove", function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        });
+        document.addEventListener("touchend", function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        });
+        document.addEventListener("keyup", function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        });
+        document.addEventListener("keydown", function (ev) {
+          if (
+            !ev.ctrlKey &&
+            ev.key !== "Enter" &&
+            ev.key !== "Escape" &&
+            ev.key !== "Backspace" &&
+            ev.key !== "ArrowLeft" &&
+            ev.key !== "ArrowRight" &&
+            ev.key !== "ArrowUp" &&
+            ev.key !== "ArrowDown"
+          ) {
+            canvas.dispatchEvent(new KeyboardEvent("keypress", ev));
+          } else if (ev.ctrlKey && ev.key === "v") {
+            return true;
+          }
+          ev.preventDefault();
+          ev.stopPropagation();
+        });
+      }
+      var Module = {
+        locateFile: function (path) {
+          const baseURL =
+            window.location.origin +
+            window.location.pathname.substring(
+              0,
+              window.location.pathname.lastIndexOf("/")
+            );
+          return baseURL + "/" + path;
+        },
+        preRun: [
+          function () {
+            addRunDependency("syncfs");
+            if (!FS.analyzePath("/user").exists) FS.mkdir("/user");
+            FS.mount(IDBFS, { autoPersist: true }, "/user");
+            FS.syncfs(true, function (err) {
+              if (err) {
+                Module.print(err);
+              }
+              removeRunDependency("syncfs");
+            });
+          },
+        ],
+        postRun: [],
+        print: (function () {
+          return function (text) {
+            text = Array.prototype.slice.call(arguments).join(" ");
+            console.log(text);
+          };
+        })(),
+        printErr: function (text) {
+          text = Array.prototype.slice.call(arguments).join(" ");
+          console.error(text);
+        },
+        canvas: (function () {
+          var canvas = document.getElementById("canvas");
+          return canvas;
+        })(),
+        setStatus: function (text) {
+          console.log("status: " + text);
+          let display = "";
+          if (text.includes("Running...")) {
+            display = "Loading...";
+            document.getElementById("start").style.display = "block";
+          } else if (text.includes("Downloading data...")) {
+            display = text;
+          }
+
+          document.getElementById("title-text").innerHTML = display;
+        },
+        monitorRunDependencies: function (left) {
+          console.log("monitor run deps: " + left);
+          document.getElementById("title-text").innerHTML = "Initializing...";
+        },
+      };
+      window.onerror = function () {
+        console.log("onerror: " + event.message);
+      };
+    </script>
+    <script type="text/javascript">
+      // === OTC WASM robustness fixes (iOS Safari + tab-close) ===
+      (function () {
+        "use strict";
+
+        // --- Fix 0: Define isNode for Emscripten preload-cache code ---
+        // Emscripten's --use-preload-cache generates `if(isNode){return errback()}`
+        // but with -sENVIRONMENT=web, `isNode` is never defined -> ReferenceError.
+        // We are always in a browser, so define it as false (global scope).
+        if (typeof window.isNode === "undefined") {
+          window.isNode = false;
+        }
+
+        // --- Fix 1: IndexedDB.open timeout (iOS Safari hang workaround) ---
+        // Emscripten's --use-preload-cache calls indexedDB.open() and waits forever
+        // if it hangs (known iOS Safari bug: open() never resolves on first try).
+        // This wrapper forces an error after IDB_OPEN_TIMEOUT_MS so Emscripten's
+        // errback -> preloadFallback path runs, falling back to direct download
+        // instead of hanging at "Initializing..." forever.
+        var IDB_OPEN_TIMEOUT_MS = 10000;
+        try {
+          if (
+            typeof window !== "undefined" &&
+            window.indexedDB &&
+            window.IDBFactory &&
+            window.IDBFactory.prototype.open
+          ) {
+            var idbProto = window.IDBFactory.prototype;
+            var origOpen = idbProto.open;
+            idbProto.open = function (name, version) {
+              var req;
+              try {
+                req =
+                  arguments.length < 2
+                    ? origOpen.call(this, name)
+                    : origOpen.call(this, name, version);
+              } catch (e) {
+                throw e; // let Emscripten's try/catch handle sync throws
+              }
+              var settled = false;
+              var markSettled = function () {
+                settled = true;
+              };
+              try {
+                if (req.addEventListener) {
+                  req.addEventListener("success", markSettled);
+                  req.addEventListener("error", markSettled);
+                  req.addEventListener("blocked", markSettled);
+                }
+              } catch (e) {}
+              setTimeout(function () {
+                if (settled) return;
+                settled = true;
+                try {
+                  console.warn(
+                    "[otc] indexedDB.open('" +
+                      name +
+                      "') timed out after " +
+                      IDB_OPEN_TIMEOUT_MS +
+                      "ms; falling back to direct download"
+                  );
+                } catch (e) {}
+                // Dispatch synthetic error FIRST so Emscripten's
+                // onerror -> errback -> preloadFallback chain runs...
+                var ev = null;
+                try {
+                  ev = new Event("error");
+                } catch (e) {
+                  try {
+                    ev = document.createEvent("Event");
+                    ev.initEvent("error", false, false);
+                  } catch (e2) {}
+                }
+                if (ev && req.dispatchEvent) {
+                  try {
+                    req.dispatchEvent(ev);
+                  } catch (e) {}
+                }
+                // ...THEN neuter success handlers so a late real success is
+                // ignored (prevents double processPackageData if IDB recovers).
+                try {
+                  req.onsuccess = null;
+                  req.onupgradeneeded = null;
+                  req.onblocked = null;
+                  req.onerror = null;
+                } catch (e) {}
+              }, IDB_OPEN_TIMEOUT_MS);
+              return req;
+            };
+          }
+        } catch (e) {
+          try {
+            console.warn("[otc] IDB timeout patch failed:", e);
+          } catch (e2) {}
+        }
+
+        // --- Fix 2: Track WebSockets for clean shutdown on tab close ---
+        // Ensures the game server sees a clean WS close frame (not a dropped
+        // TCP), so the player logs out immediately instead of lingering.
+        // pagehide is the reliable mobile Safari signal; beforeunload is the
+        // desktop backup.
+        try {
+          if (typeof window !== "undefined" && window.WebSocket) {
+            var OrigWS = window.WebSocket;
+            var openSockets = [];
+            function PatchedWS(url, protocols) {
+              var ws =
+                protocols === undefined
+                  ? new OrigWS(url)
+                  : new OrigWS(url, protocols);
+              openSockets.push(ws);
+              var remove = function () {
+                var i = openSockets.indexOf(ws);
+                if (i >= 0) openSockets.splice(i, 1);
+              };
+              try {
+                if (ws.addEventListener) {
+                  ws.addEventListener("close", remove);
+                  ws.addEventListener("error", remove);
+                }
+              } catch (e) {}
+              return ws;
+            }
+            PatchedWS.prototype = OrigWS.prototype;
+            PatchedWS.CONNECTING = OrigWS.CONNECTING;
+            PatchedWS.OPEN = OrigWS.OPEN;
+            PatchedWS.CLOSING = OrigWS.CLOSING;
+            PatchedWS.CLOSED = OrigWS.CLOSED;
+            window.WebSocket = PatchedWS;
+
+            var closeAllSockets = function (reason) {
+              var list = openSockets.slice();
+              for (var i = 0; i < list.length; i++) {
+                try {
+                  var ws = list[i];
+                  if (
+                    ws.readyState === OrigWS.OPEN ||
+                    ws.readyState === OrigWS.CONNECTING
+                  ) {
+                    ws.close(1000, reason || "page unload");
+                  }
+                } catch (e) {}
+              }
+            };
+            window.__otcCloseSockets = closeAllSockets;
+            window.__otcSocketCount = function () {
+              return openSockets.length;
+            };
+            window.addEventListener("pagehide", function () {
+              closeAllSockets("pagehide");
+            });
+            window.addEventListener("beforeunload", function () {
+              closeAllSockets("beforeunload");
+            });
+          }
+        } catch (e) {
+          try {
+            console.warn("[otc] WS tracking patch failed:", e);
+          } catch (e2) {}
+        }
+      })();
+    </script>
+    {{{ SCRIPT }}}
+  </body>
+</html>
