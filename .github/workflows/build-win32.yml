@@ -7,7 +7,9 @@ jobs:
       VCPKG_BINARY_SOURCES: "clear"
     steps:
       - name: Install v141 toolset
-        run: choco install visualstudio2017buildtools -y --package-parameters "--add Microsoft.VisualStudio.Component.VC.v141.x86.x64 --quiet --norestart"
+        run: |
+          & "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vs_installer.exe" modify --installPath "C:/Program Files/Microsoft Visual Studio/2022/Enterprise" --add Microsoft.VisualStudio.Component.VC.v141.x86.x64 --passive --norestart | Out-Null
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { throw "vs_installer failed with $LASTEXITCODE" }
         shell: pwsh
 
       - name: Clone source
