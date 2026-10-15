@@ -2,10 +2,14 @@ name: Build Windows 32-bit
 on: workflow_dispatch
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: windows-2022
     env:
       VCPKG_BINARY_SOURCES: "clear"
     steps:
+      - name: Install v141 toolset
+        run: choco install visualstudio2017buildtools -y --package-parameters "--add Microsoft.VisualStudio.Component.VC.v141.x86.x64 --quiet --norestart"
+        shell: pwsh
+
       - name: Clone source
         run: git clone https://github.com/matzinhozz/redemption860.git src
       
