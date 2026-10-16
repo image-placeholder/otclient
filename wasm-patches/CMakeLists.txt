@@ -234,8 +234,8 @@ else()
 		find_package(GLEW REQUIRED)
 		find_package(LuaJIT REQUIRED)
 	else()
-		set(LUA_LIBRARY ${LUA_LIBRARY} ${CMAKE_SOURCE_DIR}/browser/include/lua51/liblua.a)
-		set(BROWSER_INCLUDE_DIR ${BROWSER_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/browser/include)
+		set(LUA_LIBRARY ${LUA_LIBRARY} browser/include/lua51/liblua.a)
+		set(BROWSER_INCLUDE_DIR ${BROWSER_INCLUDE_DIR} browser/include)
 	endif()
 endif()
 
@@ -562,7 +562,7 @@ elseif(ANDROID)
 elseif(WASM)
   target_include_directories(${PROJECT_NAME}
 		PRIVATE
-		${CMAKE_SOURCE_DIR}/src
+		src
 		${CMAKE_THREAD_LIBS_INIT}
 		${Protobuf_INCLUDE_DIRS}
 		${GMP_INCLUDE_DIR}
@@ -635,9 +635,9 @@ elseif(WASM)
 			-sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sUSE_PTHREADS=1 -sFETCH=1 -sUSE_ZLIB=1
 			-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency
 			-sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=1073741824 -sALLOW_MEMORY_GROWTH=1
-			--preload-file=${CMAKE_SOURCE_DIR}/otclientrc.lua@otclientrc.lua --preload-file=${CMAKE_SOURCE_DIR}/init.lua@init.lua
-			--preload-file=${CMAKE_SOURCE_DIR}/data@data --preload-file=${CMAKE_SOURCE_DIR}/mods@mods --preload-file=${CMAKE_SOURCE_DIR}/modules@modules
-			--shell-file=${CMAKE_SOURCE_DIR}/browser/shell.html --use-preload-cache")
+			--preload-file=otclientrc.lua@otclientrc.lua --preload-file=init.lua@init.lua
+			--preload-file=data@data --preload-file=mods@mods --preload-file=modules@modules
+			--shell-file=browser/shell.html --use-preload-cache")
 	set_target_properties(${PROJECT_NAME} PROPERTIES
   	LINK_FLAGS ${linkflags})
 	set(CMAKE_EXECUTABLE_SUFFIX ".html")
@@ -737,6 +737,6 @@ if (TOGGLE_BIN_FOLDER)
 else()
 	set_target_properties(${PROJECT_NAME}
 	PROPERTIES
-		RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/"
+		RUNTIME_OUTPUT_DIRECTORY ""
 	)
 endif()
