@@ -50,9 +50,13 @@ jobs:
       - name: Clone otclient-web source
         run: |
           git clone https://github.com/OTArchive/otclient-web.git /tmp/otc-src
-          cp ${{ github.workspace }}/wasm-patches/CMakeLists.txt /tmp/otc-src/src/CMakeLists.txt
-          cp ${{ github.workspace }}/wasm-patches/shell.html /tmp/otc-src/browser/shell.html
-          echo "OTC_SRC=/tmp/otc-src" >> $GITHUB_ENV
+          cp -r /tmp/otc-src/* ${{ github.workspace }}/
+          cp -r /tmp/otc-src/.git ${{ github.workspace }}/ 2>/dev/null || true
+
+      - name: Apply our patches
+        run: |
+          cp ${{ github.workspace }}/wasm-patches/CMakeLists.txt ${{ github.workspace }}/src/CMakeLists.txt
+          cp ${{ github.workspace }}/wasm-patches/shell.html ${{ github.workspace }}/browser/shell.html
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
@@ -62,7 +66,7 @@ jobs:
       - name: Get vcpkg commit ID
         id: vcpkg-step
         run: |
-          vcpkgCommitId=$(grep '.builtin-baseline' /tmp/otc-src/vcpkg.json | awk -F: '{print $2}' | tr -d '," ')
+          vcpkgCommitId=$(grep '.builtin-baseline' vcpkg.json | awk -F: '{print $2}' | tr -d '," ')
           echo "vcpkgGitCommitId=$vcpkgCommitId" >> $GITHUB_OUTPUT
 
       - name: Cache full vcpkg artifacts
@@ -87,11 +91,11 @@ jobs:
 
       - name: Compute vcpkg hash
         id: hash
-        run: echo "hash=$(sha256sum /tmp/otc-src/vcpkg.json | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+        run: echo "hash=$(sha256sum vcpkg.json | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Configure CMake
         run: |
-          cmake -G Ninja -S /tmp/otc-src -B build-${{ matrix.buildtype }} \
+          cmake -G Ninja -S . -B build-${{ matrix.buildtype }} \
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake \
             -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
             -DVCPKG_TARGET_TRIPLET=wasm32-emscripten \
