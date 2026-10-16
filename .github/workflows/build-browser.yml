@@ -47,12 +47,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Clone otclient-web source
-        run: |
-          git clone https://github.com/OTArchive/otclient-web.git /tmp/otc-src
-          cp -r /tmp/otc-src/* ${{ github.workspace }}/
-          cp -r /tmp/otc-src/.git ${{ github.workspace }}/ 2>/dev/null || true
-
       - name: Apply our patches
         run: |
           cp ${{ github.workspace }}/wasm-patches/CMakeLists.txt ${{ github.workspace }}/src/CMakeLists.txt
