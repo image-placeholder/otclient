@@ -634,7 +634,7 @@ elseif(WASM)
 			-sOFFSCREEN_FRAMEBUFFER -sENVIRONMENT=web,worker -sPROXY_TO_PTHREAD -sFULL_ES2=1
 			-sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sUSE_PTHREADS=1 -sFETCH=1 -sUSE_ZLIB=1
 			-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency
-			-sINITIAL_MEMORY=268435456 -sMAXIMUM_MEMORY=1073741824 -sALLOW_MEMORY_GROWTH=1
+			-sINITIAL_MEMORY=536870912 -sALLOW_MEMORY_GROWTH=0
 			--preload-file=${CMAKE_SOURCE_DIR}/otclientrc.lua@otclientrc.lua --preload-file=${CMAKE_SOURCE_DIR}/init.lua@init.lua
 			--preload-file=${CMAKE_SOURCE_DIR}/data@data --preload-file=${CMAKE_SOURCE_DIR}/mods@mods --preload-file=${CMAKE_SOURCE_DIR}/modules@modules
 			--shell-file=${CMAKE_SOURCE_DIR}/browser/shell.html --use-preload-cache")
