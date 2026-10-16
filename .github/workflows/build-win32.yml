@@ -19,8 +19,12 @@ jobs:
     # Do NOT move this to VS 2026 / v145 (e.g. the vc18 solution): it can't.
     runs-on: windows-2022
     env:
-      # Local binary cache so dependencies are only compiled once, not every run.
+      # Compiled dependencies are cached here, so they are built once, not every run.
       VCPKG_BINARY_SOURCES: "clear;files,C:/vcpkg-cache,readwrite"
+      # Downloaded tool archives (incl. the MSYS2 packages vcpkg fetches) are
+      # cached too: MSYS2 mirrors delete old package versions, so a download
+      # that works today can 404 later.
+      VCPKG_DOWNLOADS: C:/vcpkg-downloads
 
     steps:
       - name: Clone source
@@ -29,22 +33,28 @@ jobs:
           git clone $env:SRC_REPO src
           git -C src checkout $env:SRC_REF
 
-      - name: Cache vcpkg binary packages
-        uses: actions/cache@v4
+      - name: Restore vcpkg caches
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
-          path: C:/vcpkg-cache
-          key: vcpkg-${{ env.TRIPLET }}-${{ hashFiles('src/vcpkg.json') }}
+          path: |
+            C:/vcpkg-cache
+            C:/vcpkg-downloads
+          # run_id makes every run save its own entry, so progress survives
+          # a failed run; restore-keys pick up the most recent one.
+          key: vcpkg-${{ env.TRIPLET }}-${{ hashFiles('src/vcpkg.json') }}-${{ github.run_id }}
           restore-keys: |
+            vcpkg-${{ env.TRIPLET }}-${{ hashFiles('src/vcpkg.json') }}-
             vcpkg-${{ env.TRIPLET }}-
 
-      # vcpkg's scripts must match the ports in vcpkg.json's "builtin-baseline".
-      # Cloning master (as before) pairs 2024 ports with 2026 scripts.
-      - name: Set up vcpkg at the manifest baseline
+      # Use a CURRENT vcpkg checkout (full clone, not shallow). vcpkg.json's
+      # "builtin-baseline" still pins every package version. Do not check out
+      # the baseline commit itself: its scripts reference MSYS2 package
+      # versions that no longer exist on the mirrors (404).
+      - name: Set up vcpkg
         shell: pwsh
         run: |
-          $baseline = (Get-Content src/vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
           git clone https://github.com/microsoft/vcpkg.git C:/vcpkg
-          git -C C:/vcpkg checkout $baseline
           C:/vcpkg/bootstrap-vcpkg.bat -disableMetrics
 
       # No separate `vcpkg install` step: the vcpkg CMake toolchain runs the
@@ -84,3 +94,13 @@ jobs:
         with:
           name: otclient-win32
           path: artifacts
+
+      # Runs even when the build failed, so a long first run isn't wasted.
+      - name: Save vcpkg caches
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:/vcpkg-cache
+            C:/vcpkg-downloads
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
