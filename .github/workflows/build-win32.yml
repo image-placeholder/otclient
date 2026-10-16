@@ -1,39 +1,86 @@
-name: Build Windows 32-bit
+name: Build Windows 32-bit (Win7 / 10 / 11)
+
 on: workflow_dispatch
+
+env:
+  # What gets built. Pin SRC_REF to a commit SHA for reproducible builds.
+  # If you actually meant to build THIS repo, delete the clone step and use
+  # `actions/checkout@v4` with `path: src` instead.
+  SRC_REPO: https://github.com/matzinhozz/redemption860.git
+  SRC_REF: main
+  # Static CRT (/MT) + static libs: no VC++ redistributable and no UCRT update
+  # (KB2999226) needed on Windows 7. Lives in vcpkg's community triplets.
+  TRIPLET: x86-windows-static
+
 jobs:
   build:
+    # windows-2022 ships Visual Studio 2022 (toolset v143): C++23-capable AND
+    # the last Visual Studio generation that can still target Windows 7.
+    # Do NOT move this to VS 2026 / v145 (e.g. the vc18 solution): it can't.
     runs-on: windows-2022
     env:
-      VCPKG_BINARY_SOURCES: "clear"
-    steps:
-      - name: Install VS2017 Build Tools
-        run: choco install visualstudio2017buildtools visualstudio2017-workload-vctools -y
-        shell: pwsh
+      # Local binary cache so dependencies are only compiled once, not every run.
+      VCPKG_BINARY_SOURCES: "clear;files,C:/vcpkg-cache,readwrite"
 
+    steps:
       - name: Clone source
-        run: git clone https://github.com/matzinhozz/redemption860.git src
-      
-      - name: Setup vcpkg
+        shell: pwsh
         run: |
+          git clone $env:SRC_REPO src
+          git -C src checkout $env:SRC_REF
+
+      - name: Cache vcpkg binary packages
+        uses: actions/cache@v4
+        with:
+          path: C:/vcpkg-cache
+          key: vcpkg-${{ env.TRIPLET }}-${{ hashFiles('src/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ env.TRIPLET }}-
+
+      # vcpkg's scripts must match the ports in vcpkg.json's "builtin-baseline".
+      # Cloning master (as before) pairs 2024 ports with 2026 scripts.
+      - name: Set up vcpkg at the manifest baseline
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content src/vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
           git clone https://github.com/microsoft/vcpkg.git C:/vcpkg
-          C:/vcpkg/bootstrap-vcpkg.bat
-      
-      - name: Install dependencies
-        run: C:/vcpkg/vcpkg install --triplet=x86-windows --x-install-root=C:/vcpkg/installed
-        working-directory: src
-      
+          git -C C:/vcpkg checkout $baseline
+          C:/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+      # No separate `vcpkg install` step: the vcpkg CMake toolchain runs the
+      # manifest install itself during configure (into build/vcpkg_installed),
+      # so a separate step just compiled every dependency twice.
       - name: Configure
-        run: |
-          cd src
-          cmake -B build -G "Visual Studio 15 2017" -A Win32 -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x86-windows
-      
+        working-directory: src
+        run: >
+          cmake -B build -G "Visual Studio 17 2022" -A Win32 -T host=x64
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ env.TRIPLET }}
+          -DVCPKG_HOST_TRIPLET=x64-windows
+          -DBUILD_STATIC_LIBRARY=ON
+
       - name: Build
+        working-directory: src
+        run: cmake --build build --config Release --parallel
+
+      # The project writes otclient.exe to the SOURCE dir by default
+      # (RUNTIME_OUTPUT_DIRECTORY = CMAKE_SOURCE_DIR), not build/Release,
+      # so search for it instead of hard-coding a path.
+      - name: Collect artifact
+        shell: pwsh
         run: |
-          cd src
-          cmake --build build --config Release
-      
+          $exe = Get-ChildItem src -Recurse -Filter otclient.exe |
+                 Where-Object { $_.FullName -notmatch 'vcpkg_installed|CMakeFiles' } |
+                 Select-Object -First 1
+          if (-not $exe) { Write-Error "otclient.exe not found"; exit 1 }
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item $exe.FullName artifacts
+          Get-ChildItem $exe.Directory.FullName -Filter *.dll -ErrorAction SilentlyContinue |
+            Copy-Item -Destination artifacts
+          Get-ChildItem artifacts
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: otclient-win32
-          path: src/build/Release/otclient.exe
+          path: artifacts
