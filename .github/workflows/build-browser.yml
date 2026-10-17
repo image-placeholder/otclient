@@ -57,6 +57,8 @@ jobs:
           else
             sed -i 's/-sALLOW_MEMORY_GROWTH=1/-sINITIAL_MEMORY=268435456 -sALLOW_MEMORY_GROWTH=0/' ${{ github.workspace }}/src/CMakeLists.txt
           fi
+          # Limit pthread pool for iPhone (6 workers OOM)
+          sed -i 's/-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency/-sPTHREAD_POOL_SIZE=2/g' ${{ github.workspace }}/src/CMakeLists.txt
           sed -i 's/-sMAXIMUM_MEMORY=[0-9]*//g; s/-sALLOW_MEMORY_GROWTH=1/-sALLOW_MEMORY_GROWTH=0/g' ${{ github.workspace }}/src/CMakeLists.txt
           # Ensure zlib in compile flags
           grep -q 'sUSE_ZLIB=1.*CMAKE_CXX_FLAGS' ${{ github.workspace }}/src/CMakeLists.txt || sed -i 's/set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3/set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -sUSE_ZLIB=1/' ${{ github.workspace }}/src/CMakeLists.txt
