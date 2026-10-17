@@ -47,6 +47,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Clone upstream source (known-good)
+        run: |
+          rm -rf /tmp/upstream
+          git clone https://github.com/OTArchive/otclient-web.git /tmp/upstream
+          cp -r /tmp/upstream/src/* ${{ github.workspace }}/src/
+          cp -r /tmp/upstream/data ${{ github.workspace }}/ 2>/dev/null || true
+          cp -r /tmp/upstream/modules ${{ github.workspace }}/ 2>/dev/null || true
+          cp -r /tmp/upstream/mods ${{ github.workspace }}/ 2>/dev/null || true
+          cp /tmp/upstream/otclientrc.lua ${{ github.workspace }}/ 2>/dev/null || true
+          cp /tmp/upstream/init.lua ${{ github.workspace }}/ 2>/dev/null || true
+
       - name: Apply our patches
         run: |
           # Patch CMakeLists in-place (preserves repo structure)
