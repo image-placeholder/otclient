@@ -1,0 +1,207 @@
+name: Build Windows 32-bit (Win7 / 10 / 11)
+
+on: workflow_dispatch
+
+env:
+  SRC_REPO: https://github.com/matzinhozz/redemption860.git
+  SRC_REF: c756030e53d2bf8e2873c0845c0f0d5dc3bf6bbe
+  VCPKG_REF: c52f7bd748185ef0e0daf033d9f2ddfc8a3449ea
+  TRIPLET: x86-windows-static
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      VCPKG_BINARY_SOURCES: "clear;files,C:/vcpkg-cache,readwrite"
+      VCPKG_DOWNLOADS: C:/vcpkg-downloads
+
+    steps:
+      - name: Clone source (pinned)
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git clone $env:SRC_REPO src
+          git -C src checkout $env:SRC_REF
+          git -C src log -1 --format='source commit: %H %s'
+
+      - name: Apply compatibility fixes
+        shell: python
+        run: |
+          import os, pathlib, re, sys
+          BASE = pathlib.Path(os.environ.get("SRC_DIR", "src"))
+          INSERTS = [
+              ("src/client/localplayer.h",           '#include "player.h"',                        '#include <framework/core/clock.h>',                     "after"),
+              ("src/client/tile.h",                  '#include "attachableobject.h"',              '#include "creature.h"',                                 "after"),
+              ("src/client/protocolgameparse.cpp",   '#include "attachedeffectmanager.h"',         '#include "client.h"',                                   "after"),
+              ("src/client/game.cpp",                '#include "attachedeffect.h"',                '#include "client.h"',                                   "after"),
+              ("src/client/protocolgamesend.cpp",    '#include <framework/core/application.h>',    '#include <framework/core/graphicalapplication.h>',      "after"),
+              ("src/framework/graphics/ttfloader.cpp", '#include "texturemanager.h"',              '#include "texture.h"',                                  "before"),
+          ]
+          HASH_FILE = "src/framework/stdext/hash.h"
+          HASH_OLD = """    // Robin Hood lib
+              constexpr size_t hash_int(size_t x) noexcept
+              {
+                  x ^= x >> 33U;
+                  x *= UINT64_C(0xff51afd7ed558ccd);
+                  x ^= x >> 33U;
+                  return x;
+              }
+          """
+          HASH_NEW = """    // Robin Hood lib
+              // The mixer is defined per word size: shifting a 32-bit size_t by 33 is undefined
+              // behaviour (MSVC C4293), so 32-bit targets use the murmur3 32-bit finalizer.
+              constexpr uint64_t hash_mix64(uint64_t x) noexcept
+              {
+                  x ^= x >> 33U;
+                  x *= UINT64_C(0xff51afd7ed558ccd);
+                  x ^= x >> 33U;
+                  return x;
+              }
+
+              constexpr uint32_t hash_mix32(uint32_t x) noexcept
+              {
+                  x ^= x >> 16U;
+                  x *= UINT32_C(0x85ebca6b);
+                  x ^= x >> 13U;
+                  x *= UINT32_C(0xc2b2ae35);
+                  x ^= x >> 16U;
+                  return x;
+              }
+
+              constexpr size_t hash_int(size_t x) noexcept
+              {
+                  if constexpr (sizeof(size_t) == 8)
+                      return static_cast<size_t>(hash_mix64(x));
+                  else
+                      return static_cast<size_t>(hash_mix32(static_cast<uint32_t>(x)));
+              }
+          """
+          def read(p):
+              with open(p, "r", encoding="utf-8", newline="") as f:
+                  return f.read()
+          def write(p, s):
+              with open(p, "w", encoding="utf-8", newline="") as f:
+                  f.write(s)
+          failed = []
+          for rel, anchor, new_line, where in INSERTS:
+              p = BASE / rel
+              if not p.is_file():
+                  failed.append(f"{rel}: file not found"); continue
+              s = read(p)
+              line_re = re.compile(r"^" + re.escape(new_line) + r"[ \t]*\r?$", re.M)
+              if line_re.search(s):
+                  print(f"skip   {rel}: already contains {new_line}"); continue
+              anchor_re = re.compile(r"^(?P<line>" + re.escape(anchor) + r")[ \t]*(?P<eol>\r?\n)", re.M)
+              hits = list(anchor_re.finditer(s))
+              if len(hits) != 1:
+                  failed.append(f"{rel}: expected exactly 1 anchor line {anchor!r}, found {len(hits)}"); continue
+              m = hits[0]
+              eol = m.group("eol")
+              if where == "after":
+                  rep = m.group("line") + eol + new_line + eol
+              else:
+                  rep = new_line + eol + m.group("line") + eol
+              s = s[:m.start()] + rep + s[m.end():]
+              write(p, s)
+              print(f"edited {rel}: {where} {anchor!r} -> {new_line}")
+          p = BASE / HASH_FILE
+          if not p.is_file():
+              failed.append(f"{HASH_FILE}: file not found")
+          else:
+              s = read(p)
+              crlf = "\r\n" in s
+              n = s.replace("\r\n", "\n")
+              if "hash_mix64" in n:
+                  print(f"skip   {HASH_FILE}: already patched")
+              elif n.count(HASH_OLD) != 1:
+                  failed.append(f"{HASH_FILE}: original hash_int block not found exactly once (source changed?)")
+              else:
+                  n = n.replace(HASH_OLD, HASH_NEW)
+                  write(p, n.replace("\n", "\r\n") if crlf else n)
+                  print(f"edited {HASH_FILE}: 32-bit-safe hash_int")
+          if failed:
+              print("\nERROR: could not apply compatibility fixes:")
+              for f in failed: print("  -", f)
+              print("The pinned source commit probably differs from the one these fixes were written for.")
+              sys.exit(1)
+          print("\nAll compatibility fixes applied.")
+
+      - name: Show source changes
+        shell: pwsh
+        run: git -C src diff --stat
+
+      - name: Restore vcpkg caches
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:/vcpkg-cache
+            C:/vcpkg-downloads
+          key: vcpkg-${{ env.TRIPLET }}-${{ hashFiles('src/vcpkg.json') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-${{ env.TRIPLET }}-${{ hashFiles('src/vcpkg.json') }}-
+            vcpkg-${{ env.TRIPLET }}-
+
+      - name: Set up vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:/vcpkg
+          git -C C:/vcpkg checkout $env:VCPKG_REF
+          C:/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Configure
+        working-directory: src
+        run: >
+          cmake -B build -G "Visual Studio 17 2022" -A Win32 -T host=x64
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=${{ env.TRIPLET }}
+          -DVCPKG_HOST_TRIPLET=x64-windows
+          -DBUILD_STATIC_LIBRARY=ON
+          -DOPTIONS_ENABLE_IPO=OFF
+          -DOTCLIENT_BUILD_TESTS=OFF
+
+      - name: Build
+        working-directory: src
+        run: cmake --build build --config Release --target otclient --parallel
+
+      - name: Collect artifact
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem src -Recurse -Filter otclient.exe |
+                 Where-Object { $_.FullName -notmatch 'vcpkg_installed|CMakeFiles' } |
+                 Select-Object -First 1
+          if (-not $exe) { Write-Error "otclient.exe not found"; exit 1 }
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item $exe.FullName artifacts
+          Get-ChildItem $exe.Directory.FullName -Filter *.dll -ErrorAction SilentlyContinue |
+            Copy-Item -Destination artifacts
+          Get-ChildItem artifacts
+
+      - name: Windows 7 import audit
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
+          Write-Host "dumpbin: $dumpbin"
+          $imports = & $dumpbin /imports artifacts\otclient.exe
+          Write-Host "--- imported DLLs ---"
+          $imports | Select-String -Pattern '^\s+\S+\.dll\s*$' | ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique
+          Write-Host "--- Win8+/Win10-only APIs (none expected) ---"
+          $hits = $imports | Select-String -Pattern 'api-ms-win-core-synch-l1-2-0|GetSystemTimePreciseAsFileTime|WaitOnAddress|WakeByAddress|SetThreadDescription'
+          if ($hits) { $hits | ForEach-Object { Write-Warning $_.Line.Trim() } } else { Write-Host "none found" }
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: otclient-win32
+          path: artifacts
+
+      - name: Save vcpkg caches
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:/vcpkg-cache
+            C:/vcpkg-downloads
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
