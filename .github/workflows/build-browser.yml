@@ -61,20 +61,22 @@ jobs:
 
       - name: Apply our patches
         run: |
-          # Patch CMakeLists in-place (preserves repo structure)
-          sed -i 's/-O3/-O3/g; s/-Os/-O3/g' ${{ github.workspace }}/src/CMakeLists.txt
-          # Set 256MB fixed memory (add if missing, replace if present)
-          if grep -q 'sINITIAL_MEMORY=' ${{ github.workspace }}/src/CMakeLists.txt; then
-            sed -i 's/-sINITIAL_MEMORY=[0-9]*/-sINITIAL_MEMORY=268435456/g' ${{ github.workspace }}/src/CMakeLists.txt
+          # Clean patch: 512MB fixed, -O3, no thread limit
+          F=${{ github.workspace }}/src/CMakeLists.txt
+          # Ensure -O3 (not -Os)
+          sed -i 's/-Os/-O3/g' $F
+          # 512MB fixed memory (add if missing)
+          if grep -q 'sINITIAL_MEMORY=' $F; then
+            sed -i 's/-sINITIAL_MEMORY=[0-9]*/-sINITIAL_MEMORY=536870912/g' $F
           else
-            sed -i 's/-sALLOW_MEMORY_GROWTH=1/-sINITIAL_MEMORY=268435456 -sALLOW_MEMORY_GROWTH=0/' ${{ github.workspace }}/src/CMakeLists.txt
+            sed -i 's/-sALLOW_MEMORY_GROWTH=1/-sINITIAL_MEMORY=536870912 -sALLOW_MEMORY_GROWTH=0/' $F
           fi
-          # Limit pthread pool for iPhone (6 workers OOM)
-          sed -i 's/-sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency/-sPTHREAD_POOL_SIZE=2/g' ${{ github.workspace }}/src/CMakeLists.txt
-          sed -i 's/-sMAXIMUM_MEMORY=[0-9]*//g; s/-sALLOW_MEMORY_GROWTH=1/-sALLOW_MEMORY_GROWTH=0/g' ${{ github.workspace }}/src/CMakeLists.txt
-          # Ensure zlib in compile flags
-          grep -q 'sUSE_ZLIB=1.*CMAKE_CXX_FLAGS' ${{ github.workspace }}/src/CMakeLists.txt || sed -i 's/set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3/set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -sUSE_ZLIB=1/' ${{ github.workspace }}/src/CMakeLists.txt
-          cp ${{ github.workspace }}/wasm-patches/shell.html ${{ github.workspace }}/browser/shell.html
+          sed -i 's/-sMAXIMUM_MEMORY=[0-9]*//g' $F
+          # Ensure no growth
+          sed -i 's/-sALLOW_MEMORY_GROWTH=1/-sALLOW_MEMORY_GROWTH=0/g' $F
+          echo "Patched:"
+          grep -o '\-sINITIAL_MEMORY=[0-9]*' $F | head -1
+          grep -o '\-sALLOW_MEMORY_GROWTH=[01]' $F | head -1
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
