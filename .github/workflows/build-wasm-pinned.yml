@@ -1,0 +1,75 @@
+name: Build WASM (Pinned Working Source)
+
+on: workflow_dispatch
+
+env:
+  # EXACT commit that produced the working 1GB build (Aug 15, 2026)
+  # Do NOT change this. Our fork is broken. Upstream at this commit works.
+  SRC_REF: 4055623e29e3565b0b48c0bcf5a42c6d67c0090f
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Clone upstream at pinned commit
+        run: |
+          git clone https://github.com/OTArchive/otclient-web.git src
+          git -C src checkout ${{ env.SRC_REF }}
+          git -C src log -1 --format='source: %H %s'
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.73
+
+      - name: Apply minimal patches
+        run: |
+          # 1. 512MB fixed memory (not 1GB, not 256MB)
+          # 2. -O3 (not -Os, which breaks fonts)
+          # 3. Keep everything else from the working source
+          cd src
+          # Ensure -O3 (revert any -Os)
+          sed -i 's/-Os/-O3/g' src/CMakeLists.txt
+          # Add 512MB fixed if INITIAL_MEMORY not present
+          if grep -q 'sINITIAL_MEMORY=' src/CMakeLists.txt; then
+            sed -i 's/-sINITIAL_MEMORY=[0-9]*/-sINITIAL_MEMORY=536870912/g' src/CMakeLists.txt
+          else
+            sed -i 's/-sALLOW_MEMORY_GROWTH=1/-sINITIAL_MEMORY=536870912 -sALLOW_MEMORY_GROWTH=0/' src/CMakeLists.txt
+          fi
+          # Remove MAXIMUM_MEMORY if present (not needed with fixed)
+          sed -i 's/-sMAXIMUM_MEMORY=[0-9]*//g' src/CMakeLists.txt
+          echo "=== Patched memory settings ==="
+          grep -o '\-sINITIAL_MEMORY=[0-9]*' src/CMakeLists.txt | head -1
+          grep -o '\-sALLOW_MEMORY_GROWTH=[01]' src/CMakeLists.txt | head -1
+
+      - name: Configure
+        working-directory: src
+        run: |
+          emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake
+
+      - name: Build
+        working-directory: src
+        run: cmake --build build --parallel --target otclient
+
+      - name: Verify
+        working-directory: src
+        run: |
+          ls -lh build/otclient.wasm build/otclient.js build/otclient.data 2>&1 | awk '{print $9, $5}'
+          grep -o 'INITIAL_MEMORY=[0-9]*' build/otclient.js | head -1
+          # Fail if not 512MB
+          if ! grep -q 'INITIAL_MEMORY=536870912' build/otclient.js; then
+            echo "ERROR: INITIAL_MEMORY is not 512MB!"
+            exit 1
+          fi
+          echo "Verified: 512MB fixed memory"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: otclient-wasm-512mb
+          path: |
+            src/build/otclient.html
+            src/build/otclient.js
+            src/build/otclient.wasm
+            src/build/otclient.data
