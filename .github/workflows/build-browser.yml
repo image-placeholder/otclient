@@ -50,8 +50,8 @@ jobs:
       - name: Clone upstream source (known-good)
         run: |
           rm -rf /tmp/upstream
-          git clone https://github.com/OTArchive/otclient-web.git /tmp/upstream
-          git -C /tmp/upstream checkout 4055623e29e3565b0b48c0bcf5a42c6d67c0090f
+          git clone https://github.com/matzinhozz/redemption860.git /tmp/upstream
+          git -C /tmp/upstream checkout c756030e53d2bf8e2873c0845c0f0d5dc3bf6bbe
           cp -r /tmp/upstream/src/* ${{ github.workspace }}/src/
           cp -r /tmp/upstream/data ${{ github.workspace }}/ 2>/dev/null || true
           cp -r /tmp/upstream/modules ${{ github.workspace }}/ 2>/dev/null || true
