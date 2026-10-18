@@ -187,6 +187,13 @@ jobs:
           Copy-Item $exe.FullName artifacts
           Get-ChildItem $exe.Directory.FullName -Filter *.dll -ErrorAction SilentlyContinue |
             Copy-Item -Destination artifacts
+          # OTClient needs data/, modules/, and init.lua in the work directory
+          # The source repo has these at the root
+          if (Test-Path "src/data") { Copy-Item -Recurse "src/data" artifacts }
+          if (Test-Path "src/modules") { Copy-Item -Recurse "src/modules" artifacts }
+          if (Test-Path "src/mods") { Copy-Item -Recurse "src/mods" artifacts }
+          if (Test-Path "src/init.lua") { Copy-Item "src/init.lua" artifacts }
+          if (Test-Path "src/otclientrc.lua") { Copy-Item "src/otclientrc.lua" artifacts }
           Get-ChildItem artifacts
 
       - name: Upload
