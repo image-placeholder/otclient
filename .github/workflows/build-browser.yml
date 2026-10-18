@@ -97,7 +97,7 @@ jobs:
       - name: Get vcpkg commit ID
         id: vcpkg-step
         run: |
-          vcpkgCommitId=$(grep '.builtin-baseline' vcpkg.json | awk -F: '{print $2}' | tr -d '," ')
+          vcpkgCommitId=$(grep '.builtin-baseline' upstream/vcpkg.json | awk -F: '{print $2}' | tr -d '," ')
           echo "vcpkgGitCommitId=$vcpkgCommitId" >> $GITHUB_OUTPUT
 
       - name: Cache full vcpkg artifacts
@@ -122,7 +122,7 @@ jobs:
 
       - name: Compute vcpkg hash
         id: hash
-        run: echo "hash=$(sha256sum vcpkg.json | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+        run: echo "hash=$(sha256sum upstream/vcpkg.json | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Configure CMake
         run: |
