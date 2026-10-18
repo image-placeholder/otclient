@@ -163,20 +163,11 @@ jobs:
       - name: Apply Lua fixes (DAT auto-detection)
         shell: pwsh
         run: |
-          if (Test-Path "lua-fixes/things.lua") {
-            Copy-Item "lua-fixes/things.lua" "src/modules/game_things/things.lua" -Force
-            Write-Host "Applied auto-detecting things.lua"
-          } else {
-            Write-Error "lua-fixes/things.lua not found"
-            exit 1
-          }
-          if (Test-Path "lua-fixes/features.lua") {
-            Copy-Item "lua-fixes/features.lua" "src/modules/game_features/features.lua" -Force
-            Write-Host "Applied fixed features.lua (U32/Enhanced/Idle OFF for 860)"
-          } else {
-            Write-Error "lua-fixes/features.lua not found"
-            exit 1
-          }
+          $base = "https://raw.githubusercontent.com/image-placeholder/otclient/browser/lua-fixes"
+          Invoke-WebRequest -Uri "$base/things.lua" -OutFile "src/modules/game_things/things.lua"
+          Write-Host "Applied auto-detecting things.lua"
+          Invoke-WebRequest -Uri "$base/features.lua" -OutFile "src/modules/game_features/features.lua"
+          Write-Host "Applied fixed features.lua (U32/Enhanced/Idle OFF for 860)"
 
       - name: Show source changes
         shell: pwsh
