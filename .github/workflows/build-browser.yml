@@ -44,20 +44,11 @@ jobs:
             cmake_build_type: Release
 
     steps:
-      - name: Checkout repository
+      - name: Checkout matzinhozz/redemption860
         uses: actions/checkout@v4
-
-      - name: Clone upstream source (known-good)
-        run: |
-          rm -rf /tmp/upstream
-          git clone https://github.com/matzinhozz/redemption860.git /tmp/upstream
-          git -C /tmp/upstream checkout c756030e53d2bf8e2873c0845c0f0d5dc3bf6bbe
-          cp -r /tmp/upstream/src/* ${{ github.workspace }}/src/
-          cp -r /tmp/upstream/data ${{ github.workspace }}/ 2>/dev/null || true
-          cp -r /tmp/upstream/modules ${{ github.workspace }}/ 2>/dev/null || true
-          cp -r /tmp/upstream/mods ${{ github.workspace }}/ 2>/dev/null || true
-          cp /tmp/upstream/otclientrc.lua ${{ github.workspace }}/ 2>/dev/null || true
-          cp /tmp/upstream/init.lua ${{ github.workspace }}/ 2>/dev/null || true
+        with:
+          repository: matzinhozz/redemption860
+          ref: c756030e53d2bf8e2873c0845c0f0d5dc3bf6bbe
 
       - name: Apply our patches
         run: |
