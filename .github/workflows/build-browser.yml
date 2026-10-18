@@ -133,7 +133,8 @@ jobs:
             -DOPTIONS_ENABLE_IPO=OFF \
             -DTOGGLE_BIN_FOLDER=ON \
             -DCMAKE_BUILD_TYPE=${{ matrix.cmake_build_type }} \
-            -DTOGGLE_BOT_PROTECTION=OFF
+            -DTOGGLE_BOT_PROTECTION=OFF \
+            -DCMAKE_CXX_FLAGS="-O3" -DCMAKE_C_FLAGS="-O3"
 
       - name: Build
         run: |
