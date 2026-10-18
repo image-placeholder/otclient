@@ -1,4 +1,4 @@
-name: Build Windows 32-bit (Win7 / 10 / 11)
+name: Build Windows 32-bit (Win7 / 10 / 11) - non claude
 
 on: workflow_dispatch
 
