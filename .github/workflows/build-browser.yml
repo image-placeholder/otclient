@@ -77,6 +77,14 @@ jobs:
           echo "Patched:"
           grep -o '\-sINITIAL_MEMORY=[0-9]*' $F | head -1
           grep -o '\-sALLOW_MEMORY_GROWTH=[01]' $F | head -1
+          # Force -O3: replace any -Os/-O2/-O1 with -O3, ensure -O3 present
+          sed -i 's/-Os\b/-O3/g; s/-O2\b/-O3/g; s/-O1\b/-O3/g' $F
+          # If no -O3 in CXX flags, add it
+          if ! grep -q 'CMAKE_CXX_FLAGS.*-O3' $F; then
+            sed -i 's/set(CMAKE_CXX_FLAGS "/set(CMAKE_CXX_FLAGS "-O3 /' $F
+          fi
+          echo "Optimization:"
+          grep -o '\-O[0-9sz]' $F | sort | uniq -c | head -5
 
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
