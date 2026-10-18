@@ -62,6 +62,12 @@ jobs:
           cp -r fork/browser/overlay-ports upstream/browser/
           echo "Using fork's overlay-ports with use_pthread.patch"
 
+      - name: Apply Lua fixes (DAT auto-detection)
+        run: |
+          cp fork/lua-fixes/things.lua upstream/modules/game_things/things.lua
+          cp fork/lua-fixes/features.lua upstream/modules/game_features/features.lua
+          echo "Applied Lua fixes for official 8.60 DAT"
+
       - name: Apply our patches
         run: |
           # Clean patch: 512MB fixed, -O3, no thread limit
