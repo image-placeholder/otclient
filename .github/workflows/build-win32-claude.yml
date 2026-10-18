@@ -160,6 +160,16 @@ jobs:
               print("The pinned source commit probably differs from the one these fixes were written for.")
               sys.exit(1)
           print("\nAll compatibility fixes applied.")
+      - name: Apply Lua fixes (DAT auto-detection)
+        shell: pwsh
+        run: |
+          if (Test-Path "lua-fixes/things.lua") {
+            Copy-Item "lua-fixes/things.lua" "src/modules/game_things/things.lua" -Force
+            Write-Host "Applied auto-detecting things.lua"
+          } else {
+            Write-Error "lua-fixes/things.lua not found"
+            exit 1
+          }
 
       - name: Show source changes
         shell: pwsh
