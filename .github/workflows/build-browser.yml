@@ -49,11 +49,23 @@ jobs:
         with:
           repository: matzinhozz/redemption860
           ref: c756030e53d2bf8e2873c0845c0f0d5dc3bf6bbe
+          path: upstream
+
+      - name: Checkout fork (for working overlay-ports)
+        uses: actions/checkout@v4
+        with:
+          path: fork
+
+      - name: Use fork's overlay-ports (upstream's are broken)
+        run: |
+          rm -rf upstream/browser/overlay-ports
+          cp -r fork/browser/overlay-ports upstream/browser/
+          echo "Using fork's overlay-ports with use_pthread.patch"
 
       - name: Apply our patches
         run: |
           # Clean patch: 512MB fixed, -O3, no thread limit
-          F=${{ github.workspace }}/src/CMakeLists.txt
+          F=${{ github.workspace }}/upstream/src/CMakeLists.txt
           # Ensure -O3 (not -Os)
           sed -i 's/-Os/-O3/g' $F
           # 512MB fixed memory (add if missing)
