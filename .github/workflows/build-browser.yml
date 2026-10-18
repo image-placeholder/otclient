@@ -130,7 +130,7 @@ jobs:
             -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake \
             -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
             -DVCPKG_TARGET_TRIPLET=wasm32-emscripten \
-            -DVCPKG_OVERLAY_PORTS=${{ github.workspace }}/browser/overlay-ports \
+            -DVCPKG_OVERLAY_PORTS=${{ github.workspace }}/upstream/browser/overlay-ports \
             -DVCPKG_BUILD_TYPE=${{ matrix.cmake_build_type }} \
             -DCMAKE_MAKE_PROGRAM=ninja \
             -DOPTIONS_ENABLE_IPO=OFF \
