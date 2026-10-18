@@ -7,6 +7,9 @@ env:
   SRC_REF: c756030e53d2bf8e2873c0845c0f0d5dc3bf6bbe
   VCPKG_REF: c52f7bd748185ef0e0daf033d9f2ddfc8a3449ea
   TRIPLET: x86-windows-static
+  YY_VERSION: v1.2.3
+  YY_SHA256: 4dc68ec8784e0afed7284e4393aec672873608161c3a5ae52faf618875d95b81
+  YY_DIR: C:/yy-thunks
 
 jobs:
   build:
@@ -48,8 +51,6 @@ jobs:
               }
           """
           HASH_NEW = """    // Robin Hood lib
-              // The mixer is defined per word size: shifting a 32-bit size_t by 33 is undefined
-              // behaviour (MSVC C4293), so 32-bit targets use the murmur3 32-bit finalizer.
               constexpr uint64_t hash_mix64(uint64_t x) noexcept
               {
                   x ^= x >> 33U;
@@ -57,7 +58,6 @@ jobs:
                   x ^= x >> 33U;
                   return x;
               }
-
               constexpr uint32_t hash_mix32(uint32_t x) noexcept
               {
                   x ^= x >> 16U;
@@ -67,7 +67,6 @@ jobs:
                   x ^= x >> 16U;
                   return x;
               }
-
               constexpr size_t hash_int(size_t x) noexcept
               {
                   if constexpr (sizeof(size_t) == 8)
@@ -103,7 +102,7 @@ jobs:
                   rep = new_line + eol + m.group("line") + eol
               s = s[:m.start()] + rep + s[m.end():]
               write(p, s)
-              print(f"edited {rel}: {where} {anchor!r} -> {new_line}")
+              print(f"edited {rel}")
           p = BASE / HASH_FILE
           if not p.is_file():
               failed.append(f"{HASH_FILE}: file not found")
@@ -114,21 +113,33 @@ jobs:
               if "hash_mix64" in n:
                   print(f"skip   {HASH_FILE}: already patched")
               elif n.count(HASH_OLD) != 1:
-                  failed.append(f"{HASH_FILE}: original hash_int block not found exactly once (source changed?)")
+                  failed.append(f"{HASH_FILE}: original hash_int block not found")
               else:
                   n = n.replace(HASH_OLD, HASH_NEW)
                   write(p, n.replace("\n", "\r\n") if crlf else n)
-                  print(f"edited {HASH_FILE}: 32-bit-safe hash_int")
+                  print(f"edited {HASH_FILE}")
           if failed:
-              print("\nERROR: could not apply compatibility fixes:")
+              print("\nERROR:")
               for f in failed: print("  -", f)
-              print("The pinned source commit probably differs from the one these fixes were written for.")
               sys.exit(1)
           print("\nAll compatibility fixes applied.")
 
-      - name: Show source changes
+      - name: Get YY-Thunks (Windows 7 compatibility layer)
         shell: pwsh
-        run: git -C src diff --stat
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $zip = Join-Path $env:RUNNER_TEMP 'yy-thunks.zip'
+          Invoke-WebRequest -Uri "https://github.com/Chuyu-Team/YY-Thunks/releases/download/$env:YY_VERSION/YY-Thunks-Objs.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:YY_SHA256) { throw "YY-Thunks checksum mismatch: got $hash" }
+          Expand-Archive -Path $zip -DestinationPath $env:YY_DIR
+          $obj = "$env:YY_DIR/objs/x86/YY_Thunks_for_Win7.obj"
+          if (-not (Test-Path $obj)) { throw "missing $obj" }
+          if (-not (Test-Path "$env:YY_DIR/Config/x86/6.1.7600.txt")) { throw "missing Win7 export table" }
+          @"
+          set(CMAKE_EXE_LINKER_FLAGS "/machine:X86 $obj" CACHE STRING "Linker flags (YY-Thunks)")
+          "@ | Set-Content -Encoding ascii "$env:YY_DIR/link.cmake"
+          Get-Content "$env:YY_DIR/link.cmake"
 
       - name: Restore vcpkg caches
         id: vcpkg-cache
@@ -152,7 +163,8 @@ jobs:
       - name: Configure
         working-directory: src
         run: >
-          cmake -B build -G "Visual Studio 17 2022" -A Win32 -T host=x64
+          cmake -C ${{ env.YY_DIR }}/link.cmake
+          -B build -G "Visual Studio 17 2022" -A Win32 -T host=x64
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=${{ env.TRIPLET }}
           -DVCPKG_HOST_TRIPLET=x64-windows
@@ -177,25 +189,84 @@ jobs:
             Copy-Item -Destination artifacts
           Get-ChildItem artifacts
 
-      - name: Windows 7 import audit
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe" | Select-Object -Last 1
-          Write-Host "dumpbin: $dumpbin"
-          $imports = & $dumpbin /imports artifacts\otclient.exe
-          Write-Host "--- imported DLLs ---"
-          $imports | Select-String -Pattern '^\s+\S+\.dll\s*$' | ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique
-          Write-Host "--- Win8+/Win10-only APIs (none expected) ---"
-          $hits = $imports | Select-String -Pattern 'api-ms-win-core-synch-l1-2-0|GetSystemTimePreciseAsFileTime|WaitOnAddress|WakeByAddress|SetThreadDescription'
-          if ($hits) { $hits | ForEach-Object { Write-Warning $_.Line.Trim() } } else { Write-Host "none found" }
-
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: otclient-win32
           path: artifacts
+
+      - name: Install pefile
+        shell: pwsh
+        run: python -m pip install pefile==2024.8.26
+
+      - name: Windows 7 compatibility check
+        shell: python
+        env:
+          ARTIFACT_DIR: artifacts
+          WIN7_TABLE: ${{ env.YY_DIR }}/Config/x86/6.1.7600.txt
+        run: |
+          import collections, os, pathlib, re, sys
+          import pefile
+          artifact_dir = pathlib.Path(os.environ.get("ARTIFACT_DIR"))
+          table_path = pathlib.Path(os.environ.get("WIN7_TABLE"))
+          dll_names, dll_ords = collections.defaultdict(set), collections.defaultdict(set)
+          section = None
+          for line in table_path.read_text(encoding="utf-8", errors="replace").splitlines():
+              line = line.strip()
+              if not line: continue
+              m = re.match(r"^\[(.+)\]$", line)
+              if m:
+                  section = m.group(1).lower()
+                  dll_names[section]; dll_ords[section]
+                  continue
+              ordinal, _, name = line.partition("=")
+              if ordinal.isdigit(): dll_ords[section].add(int(ordinal))
+              if name: dll_names[section].add(name)
+          local_exports = {}
+          pes = sorted(p for p in artifact_dir.iterdir() if p.suffix.lower() in (".exe", ".dll"))
+          for p in pes:
+              pe = pefile.PE(str(p), fast_load=True)
+              pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"]])
+              names, ords = set(), set()
+              for s in getattr(getattr(pe, "DIRECTORY_ENTRY_EXPORT", None), "symbols", []) or []:
+                  ords.add(s.ordinal)
+                  if s.name: names.add(s.name.decode("ascii", "replace"))
+              local_exports[p.name.lower()] = (names, ords)
+          def resolves(dll, name, ordinal):
+              dll = dll.lower()
+              if dll in local_exports:
+                  names, ords = local_exports[dll]
+                  return (name in names) if name else (ordinal in ords)
+              if dll in dll_names:
+                  return (name in dll_names[dll]) if name else (ordinal in dll_ords[dll])
+              return None
+          hard, soft = [], []
+          for p in pes:
+              pe = pefile.PE(str(p), fast_load=True)
+              pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"], pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"]])
+              sub = (pe.OPTIONAL_HEADER.MajorSubsystemVersion, pe.OPTIONAL_HEADER.MinorSubsystemVersion)
+              print(f"{p.name}: subsystem {sub[0]}.{sub[1]}")
+              if sub > (6, 1):
+                  hard.append(f"{p.name}: requires Windows {sub[0]}.{sub[1]}+")
+              for kind, attr, bucket in (("import", "DIRECTORY_ENTRY_IMPORT", hard), ("delay-import", "DIRECTORY_ENTRY_DELAY_IMPORT", soft)):
+                  for entry in getattr(pe, attr, []) or []:
+                      dll = entry.dll.decode("ascii", "replace")
+                      reported = False
+                      for imp in entry.imports:
+                          name = imp.name.decode("ascii", "replace") if imp.name else None
+                          ok = resolves(dll, name, imp.ordinal)
+                          if ok is None:
+                              if not reported:
+                                  bucket.append(f"{p.name}: {kind} {dll} - DLL not on Win7")
+                                  reported = True
+                          elif not ok:
+                              bucket.append(f"{p.name}: {kind} {dll}!{name or '#'+str(imp.ordinal)} - not on Win7")
+          for s in soft: print("warning:", s)
+          if hard:
+              print(f"\nFAIL: {len(hard)} incompatibilities:")
+              for h in hard: print("  -", h)
+              sys.exit(1)
+          print(f"\nOK: {len(pes)} file(s) Win7-compatible.")
 
       - name: Save vcpkg caches
         if: always()
