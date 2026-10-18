@@ -3,14 +3,25 @@ name: Build Windows 32-bit (Win7 / 10 / 11)
 on: workflow_dispatch
 
 env:
-  # What gets built. Pin SRC_REF to a commit SHA for reproducible builds.
-  # If you actually meant to build THIS repo, delete the clone step and use
-  # `actions/checkout@v4` with `path: src` instead.
   SRC_REPO: https://github.com/matzinhozz/redemption860.git
-  SRC_REF: main
+  # The exact commit the "compatibility fixes" step below was written and tested
+  # against. Do not float this on `main`: the fixes are anchored to this source.
+  SRC_REF: c756030e53d2bf8e2873c0845c0f0d5dc3bf6bbe
+  # vcpkg checkout used for the build. Recent on purpose: vcpkg scripts hard-code
+  # MSYS2 package versions that mirrors delete, so an old checkout 404s. Same
+  # scripts as the run whose dependency cache this reuses. To bump it, pick a
+  # current vcpkg commit; the dependency cache may then need to rebuild once.
+  VCPKG_REF: c52f7bd748185ef0e0daf033d9f2ddfc8a3449ea
   # Static CRT (/MT) + static libs: no VC++ redistributable and no UCRT update
   # (KB2999226) needed on Windows 7. Lives in vcpkg's community triplets.
   TRIPLET: x86-windows-static
+  # YY-Thunks (MIT): link-time shims so code built against the Windows 10 SDK still
+  # starts on Windows 7. Without it the exe dies at launch with e.g. "procedure entry
+  # point CreateFile2 could not be located in KERNEL32.dll". The same zip carries the
+  # Windows 7 export table the compatibility check at the end verifies against.
+  YY_VERSION: v1.2.3
+  YY_SHA256: 4dc68ec8784e0afed7284e4393aec672873608161c3a5ae52faf618875d95b81
+  YY_DIR: C:/yy-thunks
 
 jobs:
   build:
@@ -21,17 +32,161 @@ jobs:
     env:
       # Compiled dependencies are cached here, so they are built once, not every run.
       VCPKG_BINARY_SOURCES: "clear;files,C:/vcpkg-cache,readwrite"
-      # Downloaded tool archives (incl. the MSYS2 packages vcpkg fetches) are
-      # cached too: MSYS2 mirrors delete old package versions, so a download
-      # that works today can 404 later.
+      # Downloaded tool archives (incl. the MSYS2 packages vcpkg fetches) are cached
+      # too: MSYS2 mirrors delete old package versions.
       VCPKG_DOWNLOADS: C:/vcpkg-downloads
 
     steps:
-      - name: Clone source
+      # Keep LF line endings so nothing depends on the runner's autocrlf default.
+      - name: Clone source (pinned)
         shell: pwsh
         run: |
+          git config --global core.autocrlf false
           git clone $env:SRC_REPO src
           git -C src checkout $env:SRC_REF
+          git -C src log -1 --oneline
+
+      # Fails in seconds (before any dependency work) if the source is not what
+      # the fixes expect. Fixes: missing #includes that break the unity build on
+      # every platform, plus a 32-bit-unsafe hash (shift of a 32-bit size_t by 33).
+      - name: Apply compatibility fixes
+        shell: python
+        run: |
+          import os, pathlib, re, sys
+
+          BASE = pathlib.Path(os.environ.get("SRC_DIR", "src"))
+
+          # (file, anchor line, line to insert, "after"|"before")
+          INSERTS = [
+              ("src/client/localplayer.h",           '#include "player.h"',                        '#include <framework/core/clock.h>',                     "after"),
+              ("src/client/tile.h",                  '#include "attachableobject.h"',              '#include "creature.h"',                                 "after"),
+              ("src/client/protocolgameparse.cpp",   '#include "attachedeffectmanager.h"',         '#include "client.h"',                                   "after"),
+              ("src/client/game.cpp",                '#include "attachedeffect.h"',                '#include "client.h"',                                   "after"),
+              ("src/client/protocolgamesend.cpp",    '#include <framework/core/application.h>',    '#include <framework/core/graphicalapplication.h>',      "after"),
+              ("src/framework/graphics/ttfloader.cpp", '#include "texturemanager.h"',              '#include "texture.h"',                                  "before"),
+          ]
+
+          HASH_FILE = "src/framework/stdext/hash.h"
+          HASH_OLD = """    // Robin Hood lib
+              constexpr size_t hash_int(size_t x) noexcept
+              {
+                  x ^= x >> 33U;
+                  x *= UINT64_C(0xff51afd7ed558ccd);
+                  x ^= x >> 33U;
+                  return x;
+              }
+          """
+          HASH_NEW = """    // Robin Hood lib
+              // The mixer is defined per word size: shifting a 32-bit size_t by 33 is undefined
+              // behaviour (MSVC C4293), so 32-bit targets use the murmur3 32-bit finalizer.
+              constexpr uint64_t hash_mix64(uint64_t x) noexcept
+              {
+                  x ^= x >> 33U;
+                  x *= UINT64_C(0xff51afd7ed558ccd);
+                  x ^= x >> 33U;
+                  return x;
+              }
+
+              constexpr uint32_t hash_mix32(uint32_t x) noexcept
+              {
+                  x ^= x >> 16U;
+                  x *= UINT32_C(0x85ebca6b);
+                  x ^= x >> 13U;
+                  x *= UINT32_C(0xc2b2ae35);
+                  x ^= x >> 16U;
+                  return x;
+              }
+
+              constexpr size_t hash_int(size_t x) noexcept
+              {
+                  if constexpr (sizeof(size_t) == 8)
+                      return static_cast<size_t>(hash_mix64(x));
+                  else
+                      return static_cast<size_t>(hash_mix32(static_cast<uint32_t>(x)));
+              }
+          """
+
+          def read(p):
+              with open(p, "r", encoding="utf-8", newline="") as f:
+                  return f.read()
+
+          def write(p, s):
+              with open(p, "w", encoding="utf-8", newline="") as f:
+                  f.write(s)
+
+          failed = []
+
+          for rel, anchor, new_line, where in INSERTS:
+              p = BASE / rel
+              if not p.is_file():
+                  failed.append(f"{rel}: file not found"); continue
+              s = read(p)
+              line_re = re.compile(r"^" + re.escape(new_line) + r"[ \t]*\r?$", re.M)
+              if line_re.search(s):
+                  print(f"skip   {rel}: already contains {new_line}"); continue
+              anchor_re = re.compile(r"^(?P<line>" + re.escape(anchor) + r")[ \t]*(?P<eol>\r?\n)", re.M)
+              hits = list(anchor_re.finditer(s))
+              if len(hits) != 1:
+                  failed.append(f"{rel}: expected exactly 1 anchor line {anchor!r}, found {len(hits)}"); continue
+              m = hits[0]
+              eol = m.group("eol")
+              if where == "after":
+                  rep = m.group("line") + eol + new_line + eol
+              else:
+                  rep = new_line + eol + m.group("line") + eol
+              s = s[:m.start()] + rep + s[m.end():]
+              write(p, s)
+              print(f"edited {rel}: {where} {anchor!r} -> {new_line}")
+
+          p = BASE / HASH_FILE
+          if not p.is_file():
+              failed.append(f"{HASH_FILE}: file not found")
+          else:
+              s = read(p)
+              crlf = "\r\n" in s
+              n = s.replace("\r\n", "\n")
+              if "hash_mix64" in n:
+                  print(f"skip   {HASH_FILE}: already patched")
+              elif n.count(HASH_OLD) != 1:
+                  failed.append(f"{HASH_FILE}: original hash_int block not found exactly once (source changed?)")
+              else:
+                  n = n.replace(HASH_OLD, HASH_NEW)
+                  write(p, n.replace("\n", "\r\n") if crlf else n)
+                  print(f"edited {HASH_FILE}: 32-bit-safe hash_int")
+
+          if failed:
+              print("\nERROR: could not apply compatibility fixes:")
+              for f in failed: print("  -", f)
+              print("The pinned source commit probably differs from the one these fixes were written for.")
+              sys.exit(1)
+          print("\nAll compatibility fixes applied.")
+
+      - name: Show source changes
+        shell: pwsh
+        run: git -C src diff --stat
+
+      # Cheap and early so a bad download fails now, not after the dependency build.
+      - name: Get YY-Thunks (Windows 7 compatibility layer)
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          $zip = Join-Path $env:RUNNER_TEMP 'yy-thunks.zip'
+          Invoke-WebRequest -Uri "https://github.com/Chuyu-Team/YY-Thunks/releases/download/$env:YY_VERSION/YY-Thunks-Objs.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($hash -ne $env:YY_SHA256) { throw "YY-Thunks download checksum mismatch: got $hash" }
+          Expand-Archive -Path $zip -DestinationPath $env:YY_DIR
+          $obj = "$env:YY_DIR/objs/x86/YY_Thunks_for_Win7.obj"
+          if (-not (Test-Path $obj)) { throw "missing $obj" }
+          if (-not (Test-Path "$env:YY_DIR/Config/x86/6.1.7600.txt")) { throw "missing Windows 7 export table" }
+          # CMake preload script (avoids shell quoting problems with a value containing spaces).
+          # /machine:X86 is what CMake would have put in these flags by default.
+          # /LARGEADDRESSAWARE matches the project's own Win32 build (vc18/arch32.props):
+          # the client loads whole sprite files into memory, and a 32-bit exe without
+          # this flag is capped at 2 GB of address space.
+          @"
+          set(CMAKE_EXE_LINKER_FLAGS "/machine:X86 /LARGEADDRESSAWARE $obj" CACHE STRING "Linker flags (YY-Thunks Windows 7 layer, large address aware)")
+          "@ | Set-Content -Encoding ascii "$env:YY_DIR/link.cmake"
+          Get-Content "$env:YY_DIR/link.cmake"
 
       - name: Restore vcpkg caches
         id: vcpkg-cache
@@ -47,36 +202,47 @@ jobs:
             vcpkg-${{ env.TRIPLET }}-${{ hashFiles('src/vcpkg.json') }}-
             vcpkg-${{ env.TRIPLET }}-
 
-      # Use a CURRENT vcpkg checkout (full clone, not shallow). vcpkg.json's
-      # "builtin-baseline" still pins every package version. Do not check out
-      # the baseline commit itself: its scripts reference MSYS2 package
-      # versions that no longer exist on the mirrors (404).
+      # Full clone (not shallow): vcpkg.json's "builtin-baseline" still pins every
+      # package version and vcpkg needs that commit's history to resolve it.
       - name: Set up vcpkg
         shell: pwsh
         run: |
           git clone https://github.com/microsoft/vcpkg.git C:/vcpkg
+          git -C C:/vcpkg checkout $env:VCPKG_REF
           C:/vcpkg/bootstrap-vcpkg.bat -disableMetrics
 
       # No separate `vcpkg install` step: the vcpkg CMake toolchain runs the
-      # manifest install itself during configure (into build/vcpkg_installed),
-      # so a separate step just compiled every dependency twice.
+      # manifest install itself during configure (into build/vcpkg_installed).
+      # IPO off and tests off: fewer moving parts for a first green 32-bit build
+      # (upstream's own Linux CI also disables IPO and builds only the otclient
+      # target). Turn IPO back on later if you want LTO.
+      # -C link.cmake adds the YY-Thunks object to the exe link only; vcpkg
+      # dependencies are untouched, so their cache stays valid.
       - name: Configure
         working-directory: src
         run: >
-          cmake -B build -G "Visual Studio 17 2022" -A Win32 -T host=x64
+          cmake -C ${{ env.YY_DIR }}/link.cmake
+          -B build -G "Visual Studio 17 2022" -A Win32 -T host=x64
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=${{ env.TRIPLET }}
           -DVCPKG_HOST_TRIPLET=x64-windows
           -DBUILD_STATIC_LIBRARY=ON
+          -DOPTIONS_ENABLE_IPO=OFF
+          -DOTCLIENT_BUILD_TESTS=OFF
 
       - name: Build
         working-directory: src
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --target otclient --parallel
 
-      # The project writes otclient.exe to the SOURCE dir by default
-      # (RUNTIME_OUTPUT_DIRECTORY = CMAKE_SOURCE_DIR), not build/Release,
-      # so search for it instead of hard-coding a path.
-      - name: Collect artifact
+      # Assembles a COMPLETE runnable folder. The client only works from a folder that
+      # has init.lua, config.ini, data\ and modules\ next to the exe: at startup it
+      # mounts ONE folder (the first of: current directory, the exe's folder, its
+      # game_data\ subfolder, its parent folder) that contains init.lua, and files in
+      # any other folder are invisible to it. Your own Tibia.dat / Tibia.spr are not
+      # included; see README-FIRST.txt in the artifact.
+      # (The project writes otclient.exe to the SOURCE dir by default, not
+      # build/Release, so the exe is searched for instead of hard-coding a path.)
+      - name: Collect artifact (runnable folder)
         shell: pwsh
         run: |
           $exe = Get-ChildItem src -Recurse -Filter otclient.exe |
@@ -87,13 +253,169 @@ jobs:
           Copy-Item $exe.FullName artifacts
           Get-ChildItem $exe.Directory.FullName -Filter *.dll -ErrorAction SilentlyContinue |
             Copy-Item -Destination artifacts
-          Get-ChildItem artifacts
 
+          foreach ($f in 'init.lua', 'config.ini') {
+            if (-not (Test-Path "src/$f")) { Write-Error "missing $f in the source"; exit 1 }
+            Copy-Item "src/$f" artifacts
+          }
+          foreach ($d in 'data', 'modules', 'mods') {
+            if (-not (Test-Path "src/$d")) { Write-Error "missing folder $d in the source"; exit 1 }
+            Copy-Item "src/$d" "artifacts/$d" -Recurse
+          }
+          # The repo ships a 77 MB archive of sample 8.60 client files; leave it out.
+          Remove-Item "artifacts/data/things/860.rar" -ErrorAction SilentlyContinue
+
+          # Starting through this file makes this folder the working directory, which is
+          # the first place the client looks for init.lua.
+          $bat = @('@echo off', 'cd /d "%~dp0"', 'start "" "%~dp0otclient.exe"')
+          [IO.File]::WriteAllText("$PWD/artifacts/Start-OTClient.bat", ($bat -join "`r`n") + "`r`n")
+
+          $readme = @'
+          OTClient 32-bit (Windows 7 / 10 / 11)
+
+          1. Keep this whole folder together. The client needs init.lua, config.ini,
+             data\ and modules\ next to otclient.exe. At startup it uses the FIRST folder
+             that contains init.lua, checking in this order: the current directory, the
+             folder holding otclient.exe, its game_data\ subfolder, then its parent
+             folder. Files placed anywhere else are not seen.
+
+          2. Add your own client files (not included here):
+               data\things\860\Tibia.dat
+               data\things\860\Tibia.spr
+             Make sure Windows is not hiding extensions (e.g. Tibia.dat.dat or
+             config.ini.txt will not be found). The repo's data\things\860.rar is
+             a sample set of these two files.
+
+          3. Start the client with Start-OTClient.bat.
+
+          4. If something is reported missing, look for otcFonticak.log: the client writes
+             it into the folder it is really using. If it is not in this folder, the
+             client picked a different folder with its own init.lua.
+          '@
+          [IO.File]::WriteAllText("$PWD/artifacts/README-FIRST.txt", ($readme -replace "`r?`n", "`r`n"))
+
+          Get-ChildItem artifacts
+          $total = (Get-ChildItem artifacts -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          Write-Host ("artifact size: " + [math]::Round($total / 1048576, 1) + " MB")
+
+      # Uploaded BEFORE the compatibility check so you can still download the exe
+      # for testing even if the check below reports something.
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: otclient-win32
           path: artifacts
+
+      - name: Install pefile
+        shell: pwsh
+        run: python -m pip install pefile==2024.8.26
+
+      # Compares EVERY static import of the exe (and any shipped DLL) with what
+      # Windows 7 (6.1.7600) really exports, and fails listing all of them at once.
+      # This is what the Windows loader checks at launch, so a pass here means
+      # "no missing entry point" on Win7. It cannot see run-time LoadLibrary /
+      # GetProcAddress calls, so still test the exe on a real Windows 7 machine.
+      - name: Windows 7 compatibility check
+        shell: python
+        env:
+          ARTIFACT_DIR: artifacts
+          WIN7_TABLE: ${{ env.YY_DIR }}/Config/x86/6.1.7600.txt
+        run: |
+          """Fail if a 32-bit PE (or any DLL shipped next to it) imports something Windows 7 does not export.
+
+          Usage: python win7_import_check.py <artifact-dir> <6.1.7600.txt export table>
+          (or set ARTIFACT_DIR and WIN7_TABLE)
+          Static imports that Windows 7 lacks make the loader refuse to start the program
+          ("The procedure entry point X could not be located in the dynamic link library Y").
+          Delay-loaded imports only fail if called, so they are reported as warnings.
+          """
+          import collections, os, pathlib, re, sys
+          import pefile
+
+          # Inputs: ARTIFACT_DIR / WIN7_TABLE environment variables, or the two CLI arguments.
+          artifact_dir = pathlib.Path(os.environ.get("ARTIFACT_DIR") or sys.argv[1])
+          table_path = pathlib.Path(os.environ.get("WIN7_TABLE") or sys.argv[2])
+
+          # --- Windows 7 (6.1.7600) export table: [dll] / ordinal=name -------------------
+          dll_names, dll_ords = collections.defaultdict(set), collections.defaultdict(set)
+          section = None
+          for line in table_path.read_text(encoding="utf-8", errors="replace").splitlines():
+              line = line.strip()
+              if not line:
+                  continue
+              m = re.match(r"^\[(.+)\]$", line)
+              if m:
+                  section = m.group(1).lower()
+                  dll_names[section]; dll_ords[section]
+                  continue
+              ordinal, _, name = line.partition("=")
+              if ordinal.isdigit():
+                  dll_ords[section].add(int(ordinal))
+              if name:
+                  dll_names[section].add(name)
+
+          # --- exports of DLLs that ship with the app (they resolve against each other) ---
+          local_exports = {}
+          pes = sorted(p for p in artifact_dir.iterdir() if p.suffix.lower() in (".exe", ".dll"))
+          for p in pes:
+              pe = pefile.PE(str(p), fast_load=True)
+              pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"]])
+              names, ords = set(), set()
+              for s in getattr(getattr(pe, "DIRECTORY_ENTRY_EXPORT", None), "symbols", []) or []:
+                  ords.add(s.ordinal)
+                  if s.name:
+                      names.add(s.name.decode("ascii", "replace"))
+              local_exports[p.name.lower()] = (names, ords)
+
+          def resolves(dll, name, ordinal):
+              """True if `dll` (as imported) provides this symbol on Windows 7 or locally."""
+              dll = dll.lower()
+              if dll in local_exports:
+                  names, ords = local_exports[dll]
+                  return (name in names) if name else (ordinal in ords)
+              if dll in dll_names:
+                  return (name in dll_names[dll]) if name else (ordinal in dll_ords[dll])
+              return None  # DLL itself is not part of Windows 7
+
+          hard, soft = [], []
+          for p in pes:
+              pe = pefile.PE(str(p), fast_load=True)
+              pe.parse_data_directories(directories=[
+                  pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"],
+                  pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"]])
+              if pe.FILE_HEADER.Machine != 0x14c:
+                  print(f"note: {p.name} is not a 32-bit x86 image")
+              sub = (pe.OPTIONAL_HEADER.MajorSubsystemVersion, pe.OPTIONAL_HEADER.MinorSubsystemVersion)
+              print(f"{p.name}: subsystem version {sub[0]}.{sub[1]}")
+              if p.suffix.lower() == ".exe" and pe.FILE_HEADER.Machine == 0x14c:
+                  # IMAGE_FILE_LARGE_ADDRESS_AWARE: without it a 32-bit process is capped at 2 GB.
+                  laa = bool(pe.FILE_HEADER.Characteristics & 0x0020)
+                  print(f"{p.name}: large address aware: " + ("yes" if laa else "NO (2 GB limit; big sprite files may not load)"))
+              if sub > (6, 1):
+                  hard.append(f"{p.name}: PE header requires Windows {sub[0]}.{sub[1]} or newer")
+              for kind, attr, bucket in (("import", "DIRECTORY_ENTRY_IMPORT", hard),
+                                         ("delay-import", "DIRECTORY_ENTRY_DELAY_IMPORT", soft)):
+                  for entry in getattr(pe, attr, []) or []:
+                      dll = entry.dll.decode("ascii", "replace")
+                      missing_dll_reported = False
+                      for imp in entry.imports:
+                          name = imp.name.decode("ascii", "replace") if imp.name else None
+                          ok = resolves(dll, name, imp.ordinal)
+                          if ok is None:
+                              if not missing_dll_reported:
+                                  bucket.append(f"{p.name}: {kind} of {dll} - DLL does not exist on Windows 7")
+                                  missing_dll_reported = True
+                          elif not ok:
+                              bucket.append(f"{p.name}: {kind} {dll}!{name or '#' + str(imp.ordinal)} - not exported by Windows 7")
+
+          for s in soft:
+              print("warning (delay-loaded, only fails if called):", s)
+          if hard:
+              print(f"\nFAIL: {len(hard)} Windows 7 incompatibilit{'y' if len(hard) == 1 else 'ies'}:")
+              for h in hard:
+                  print("  -", h)
+              sys.exit(1)
+          print(f"\nOK: all static imports of {len(pes)} file(s) resolve on Windows 7 (6.1.7600 export table).")
 
       # Runs even when the build failed, so a long first run isn't wasted.
       - name: Save vcpkg caches
