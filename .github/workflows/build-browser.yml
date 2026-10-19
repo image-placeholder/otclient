@@ -66,7 +66,8 @@ jobs:
         run: |
           cp fork/lua-fixes/things.lua upstream/modules/game_things/things.lua
           cp fork/lua-fixes/features.lua upstream/modules/game_features/features.lua
-          echo "Applied Lua fixes for official 8.60 DAT"
+          cp fork/lua-fixes/const.lua upstream/modules/gamelib/const.lua
+          echo "Applied Lua fixes for official 8.60 DAT + RSA key"
 
       - name: Apply our patches
         run: |
