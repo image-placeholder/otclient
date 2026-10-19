@@ -174,7 +174,7 @@ jobs:
       - name: Patch client OS flag (fix Error 2)
         shell: pwsh
         run: |
-          $f = "src/client/game.h"
+          $f = "src/src/client/game.h"
           $c = Get-Content $f -Raw
           $c = $c.Replace('m_clientCustomOs{ Otc::CLIENTOS_NONE }', 'm_clientCustomOs{ Otc::CLIENTOS_OTCLIENT_WINDOWS }')
           Set-Content $f $c
