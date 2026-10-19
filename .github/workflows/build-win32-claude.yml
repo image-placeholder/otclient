@@ -168,6 +168,8 @@ jobs:
           Write-Host "Applied auto-detecting things.lua"
           Invoke-WebRequest -Uri "$base/features.lua" -OutFile "src/modules/game_features/features.lua"
           Write-Host "Applied fixed features.lua (U32/Enhanced/Idle OFF for 860)"
+          Invoke-WebRequest -Uri "$base/const.lua" -OutFile "src/modules/gamelib/const.lua"
+          Write-Host "Applied fixed const.lua (server RSA key)"
 
       - name: Patch client OS flag (fix Error 2)
         shell: pwsh
