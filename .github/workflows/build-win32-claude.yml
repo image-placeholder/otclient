@@ -176,7 +176,7 @@ jobs:
         run: |
           $f = "src/src/client/game.h"
           $c = Get-Content $f -Raw
-          $c = $c.Replace('m_clientCustomOs{ Otc::CLIENTOS_NONE }', 'm_clientCustomOs{ Otc::CLIENTOS_OTCLIENT_WINDOWS }')
+          $c = $c.Replace('m_clientCustomOs{ Otc::CLIENTOS_NONE }', 'm_clientCustomOs{ static_cast<Otc::OperatingSystem_t>(2) }')
           Set-Content $f $c
           Write-Host "Patched m_clientCustomOs to OTCLIENT_WINDOWS (11)"
 
