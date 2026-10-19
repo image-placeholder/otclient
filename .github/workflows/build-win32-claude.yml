@@ -171,15 +171,6 @@ jobs:
           Invoke-WebRequest -Uri "$base/const.lua" -OutFile "src/modules/gamelib/const.lua"
           Write-Host "Applied fixed const.lua (server RSA key)"
 
-      - name: Patch client OS flag (fix Error 2)
-        shell: pwsh
-        run: |
-          $f = "src/src/client/game.h"
-          $c = Get-Content $f -Raw
-          $c = $c.Replace('m_clientCustomOs{ Otc::CLIENTOS_NONE }', 'm_clientCustomOs{ static_cast<Otc::OperatingSystem_t>(2) }')
-          Set-Content $f $c
-          Write-Host "Patched m_clientCustomOs to OTCLIENT_WINDOWS (11)"
-
       - name: Show source changes
         shell: pwsh
         run: git -C src diff --stat
