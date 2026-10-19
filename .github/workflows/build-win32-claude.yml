@@ -169,6 +169,15 @@ jobs:
           Invoke-WebRequest -Uri "$base/features.lua" -OutFile "src/modules/game_features/features.lua"
           Write-Host "Applied fixed features.lua (U32/Enhanced/Idle OFF for 860)"
 
+      - name: Patch client OS flag (fix Error 2)
+        shell: pwsh
+        run: |
+          $f = "src/client/game.h"
+          $c = Get-Content $f -Raw
+          $c = $c -replace 'm_clientCustomOs\{ Otc::CLIENTOS_NONE \}', 'm_clientCustomOs{ Otc::CLIENTOS_OTCLIENT_WINDOWS }'
+          Set-Content $f $c
+          Write-Host "Patched m_clientCustomOs to OTCLIENT_WINDOWS (11)"
+
       - name: Show source changes
         shell: pwsh
         run: git -C src diff --stat
