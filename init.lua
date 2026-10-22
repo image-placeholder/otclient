@@ -11,12 +11,7 @@ Services = {
 
 --[[
 Servers_init = {
-    ["http://127.0.0.1/login.php"] = {
-        ["port"] = 80,
-        ["protocol"] = 1320,
-        ["httpLogin"] = true
-    },
-    ["ip.net"] = {
+    ["5.9.29.174"] = {
         ["port"] = 7171,
         ["protocol"] = 860,
         ["httpLogin"] = false
