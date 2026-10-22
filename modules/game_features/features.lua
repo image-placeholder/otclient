@@ -58,6 +58,7 @@ controller:registerEvents(g_game, {
 
         if version >= 860 then
             g_game.enableFeature(GameAttackSeq)
+            g_game.enableFeature(GameExtendedOpcode)
         end
 
         if version >= 862 then
