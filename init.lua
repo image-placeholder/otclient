@@ -4,7 +4,7 @@
 -- updater
 Services = {
     --updater = "http://localhost/api/updater.php", --./updater
-    --status = "http://localhost/login.php", --./client_entergame | ./client_topmenu
+    status = "http://5.9.29.174:8081/login.php", --./client_entergame | ./client_topmenu
     --websites = "http://localhost/?subtopic=accountmanagement", --./client_entergame "Forgot password and/or email"
     --createAccount = "http://localhost/clientcreateaccount.php", --./client_entergame -- createAccount.lua
 }
